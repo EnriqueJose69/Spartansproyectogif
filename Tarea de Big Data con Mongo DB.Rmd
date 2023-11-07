@@ -1,0 +1,359 @@
+---
+title: "Practica Big Data con Mongo DB"
+output:
+  html_document:
+    fig_caption: yes
+  pdf_document: default
+Autor: Enrique José Mirasol Pérez-Estudillo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1.Introducción
+
+En esta práctica se verá como R puede ser utilizado para conectarnos a una base de datos NoSQL. En particular Mongo DB.Para la realización de la práctica se utilizará Atlas un servicio en la nube gratuito para manejar bases de datos Mongo DB. MongoDB Atlas es fácil de configurar y tiene conjuntos de datos de muestra para ejemplos de R con Mongo DB. Puede cargar conjuntos de datos de muestra usando el "..." junto al botón de colecciones en la página de su clúster. No obstante, aunque se puede crear un clúster específico en Atlas, esta práctica parte de uno ya creado y que puede ser utilizado para la resolución de los ejercicios.
+
+* Adicionalmente, se recomienda utilizar un cliente Mongo DB para conectarse a la base de datos e inspeccionar los datos contenidos. Esto será extemadamente útil para realizar las consultas. Puede considerarse Robo 3T (https://robomongo.org/download). Además, si se crea el propio cluster en Atlas, este tiene una interfaz amigable para inspeccionar los datos.
+
+* Además de estas funciones, existe documentación de las colecciones y la información contenida en esta base de datos de ejemplo en https://docs.atlas.mongodb.com/sample-data/sample-training/
+
+* Para la resolución de ejercicios puede consultar el [Manual de Mongo DB](https://docs.mongodb.com/manual/) que contiene ejemplos y explicación de la sintáxis de Mongo DB
+
+## 1.1. Paquetes R utilizados
+
+El controlador R MongoDB preferido, mongolite, es rápido y tiene una sintaxis similar a la del shell MongoDB. Mongolite es la que se utilizará en los siguientes ejemplos. Los otros paquetes enumerados aquí no han estado tan activos en Github recientemente. Los paquetes más populares para conectar MongoDB y R son:
+
+-   **mongolite**: un controlador R MongoDB más reciente, mongolite puede realizar varias operaciones como indexación, canalizaciones de agregación, cifrado TLS y autenticación SASL, entre otras. Está basado en el paquete jsonlite para R y mongo-c-driver. Podemos instalar mongolite desde CRAN o desde RStudio (explicado en una sección posterior). RMongo: RMongo fue el primer controlador R MongoDB con una sencilla interfaz R MongoDB. Tiene una sintaxis como la del shell MongoDB. RMongo ha quedado obsoleto a partir de ahora.
+
+-   **rmongodb**: rmongodb tiene funciones para crear pipelines, manejar objetos BSON, etc. Su sintaxis es muy compleja en comparación con mongolite. Al igual que RMongo, rmongodb ha quedado obsoleto y no está disponible ni se mantiene en CRAN.
+
+En el ejercicio propuesto hemos utilizado únicamente mongolite, que es el que instalamos y cargamos en el informe. 
+
+## 1.2. Instalación Mongolite
+
+Para poder usar el paquete mongolite debemos instalarlo previamente con el comando siguiente, además de importar la librería posteriormente. Hacemos la llamada de todas las librerías que vamos a usar en el ejercicio propuesto.
+
+
+```{r librerias_usadas}
+
+library(dplyr)
+library(mongolite)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+
+```
+
+## 1.3. Conectarse a Mongo DB
+
+Esta es la cadena de conexión a MongoDB en Atlas. Se podría sustituir por otro servidor o clúster en Atlas si se desea.Esta es la cadena que usamos en toda la práctica.  
+
+```{r cadena_conexion}
+
+cadena_conexion = 'mongodb+srv://user01:user01@cluster0.mcblc3z.mongodb.net/test'
+
+```
+
+Opciones de no validación de certificados SSL. Sin esta opción puede haber error de conexión a Atlas.
+
+```{r opciones_conexion}
+
+opciones_conexion = ssl_options(weak_cert_validation = T)
+
+```
+
+# 2. Ejercicios a realizar
+
+A continuación se proponen 4 ejercicios a completar. Se recomienda completaros en script markdown de R que se proporciona.Lo primero es establecer la conexión con la base de datos donde vamos a realizar las tres primeras tareas. 
+
+## 2.1. Tarea 1
+
+Exploremos la colección - inspections. Esta recopilación contiene datos sobre las inspecciones de edificios de la ciudad de Nueva York y si pasan o no. Recuperamos dicha colección en R.
+
+```{r Tarea 1: Conectar_base_de_datos_y_recuperar_coleccion}
+
+# Establecemos las conexiones con mongo:
+
+cadena_conexion = 'mongodb+srv://user01:user01@cluster0.mcblc3z.mongodb.net/test'
+
+opciones_conexion = ssl_options(weak_cert_validation = T)
+
+conexion <- mongo(collection = "inspections", db = "sample_training", url = cadena_conexion, options = opciones_conexion)
+
+# Vemos la estructura de la base de datos:
+
+inspecciones <- conexion$find()
+
+head(inspecciones, 10)
+
+```
+
+## 2.2. Tarea 2
+
+Nos piden verificar el número de empresas que no aprobaron las inspecciones en 2015 en comparación con 2016.
+
+En la base de datos se ve en los datos obtenidos de la colección que el campo de fecha es una cadena. Lo primero que tenemos que hacer es convertirlo en tipo de fecha y luego extraer el año. Eso lo vamos a realizar en la primera parte de la tarea. Para ello usaremos la canalización de agregación de Mongodb, puede hacer todo en una sola consulta. Para manipular el campo de fecha, usaremos el operador [$addFields](https://docs.mongodb.com/manual/reference/operator/aggregation/addFields/).
+
+Además, luego nos pide agregar las deficiencias encontradas en las inspecciones por año. Vemos la primera parte de lo que nos piden en el siguiente chunk:
+
+```{r Tarea 2.1: Empresas_no_aprobaron_inspeccion}
+
+conversion <- '[
+  {
+    "$addFields": {
+      "fecha": {
+        "$dateFromString": {
+          "dateString": "$date"
+        }
+      }
+    }
+  },
+   {
+    "$addFields": {
+      "year": {
+        "$year": "$fecha"
+      }
+    }
+  },
+  {
+    "$match": {
+      "result": "Fail",
+      "year": {
+        "$in": [
+          2015,
+          2016
+        ]
+      }
+    }
+  },
+  {
+    "$group": {
+      "_id": {
+        "year": "$year"
+      },
+      "count": {
+        "$sum": 1
+      }
+    }
+  }
+]'
+
+resultados <- conexion$aggregate(conversion)
+
+View(resultados)
+
+```
+
+Los pasos que hemos seguido han sido los siguientes:
+
+  1. Agregamos un nuevo campo "fecha" que sale de la conversión de la cadena "date" a un objeto fecha.
+  2. Agregamos el campo "year" que extrae el año de la fecha.
+  3. Filtramos los documentos donde "result" es igual a "Fail" y "year" es igual a 2015 o 2016.
+  4. Finalmente, los agrupamos por "year" y calculamos la suma de documento de cada grupo.
+
+Los resultados nos aparecen en la tabla, y son para 2015 un total de 1.042 empresas y para 2016 un total de 58 empresas. 
+
+```{r 2.2: Agregar_deficiencias_inspecciones }
+
+deficiencias <- '[
+  {
+    "$addFields": {
+      "fecha": {
+        "$dateFromString": {
+          "dateString": "$date"
+        }
+      }
+    }
+  },
+  {
+    "$addFields": {
+      "year": {
+        "$year": "$fecha"
+      }
+    }
+  },
+  {
+    "$addFields": {
+      "violations": {
+        "$ifNull": [
+          "$violations",
+          []
+        ]
+      }
+    }
+  },
+  {
+    "$addFields": {
+      "deficiencias": {
+        "$cond": {
+          "if": {
+            "$eq": [
+              "$result",
+              "Fail"
+            ]
+          },
+          "then": {
+            "$size": "$violations"
+          },
+          "else": 0
+        }
+      }
+    }
+  },
+  {
+    "$match": {
+      "year": {
+        "$in": [
+          2015,
+          2016
+        ]
+      }
+    }
+  },
+  {
+    "$group": {
+      "_id": {
+        "year": "$year"
+      },
+      "count": {
+        "$sum": 1
+      },
+      "deficiencias": {
+        "$sum": "$deficiencias"
+      }
+    }
+  }
+]'
+
+resultados_deficiencias <- conexion$aggregate(deficiencias)
+
+view(resultados_deficiencias)
+
+```
+
+Los pasos que hemos seguido han sido los siguientes:
+
+  1. Agregamos un nuevo campo "fecha" que sale de la conversión de la cadena "date" a un objeto fecha.
+  2. Agregamos el campo "year" que extrae el año de la fecha.
+  3. Agregamos un campo donde recogemos las violaciones o faltas. 
+  4. En deficiencias va sumando las violaciones que han contado como Fail. 
+  5. Filtramos los documentos por los dos años. 
+  6. Agrupamos por año y contamos. 
+  7. Luego hacemos el almacenamiento en resultados_deficiencias.
+
+Los resultados nos aparecen en la tabla, y son para 2015 un total de 75.395 y para 2016 un total de 4.652 deficiencias. 
+
+## 2.3. Tarea 3
+
+Teniendo en cuenta que el resultado de la tarea anterior está agrupando los resultados por año, nos piden crear gráfico de barras.
+
+```{r Tarea 3: Hacer_graficos_tarea_2}
+
+# Caso 1. Empresas que no pasan las inspecciones en los años 2015 y 2016
+
+# Planteamos el gráfico de la comparativa de las empresas que no pasan las inspecciones:
+
+df_resultados <- data.frame(
+  Years = c(2015, 2016),
+  Empresas_no_pasan = c(1042, 58)
+)
+
+# La comparativa quedaría así entre los años 2015 y 2016:
+
+ggplot(df_resultados, aes(x = factor(Years), y = Empresas_no_pasan)) +
+  geom_bar(stat = "identity", fill = c("lightblue", "gray")) +
+  labs(
+    title = "Gráfico de comparativa empresas no pasan inspecciones 2015 vs 2016",
+    x = "Año",
+    y = "Empresas no pasan inspecciones"
+  )
+
+# Caso 2. Deficiencias encontradas en los años 2015 y 2016
+
+# Planteamos el gráfico de las deficiencias por año encontradas:
+
+df_resultados_deficiencias <- data.frame(
+  Years = c(2015, 2016),
+  Deficiencias = c(4652, 75395)
+)
+
+# Las deficiencias por año comparando 2015 y 2016:
+
+ggplot(df_resultados_deficiencias, aes(x = factor(Years), y = Deficiencias)) +
+  geom_bar(stat = "identity", fill = c("lightgreen", "lightcoral")) +
+  labs(
+    title = "Gráfico de deficiencias entre los años 2015 y 2016",
+    x = "Año",
+    y = "Deficiencias"
+  )
+
+```
+
+## 2.4. Tarea 4
+
+A continuación, utilizamos la colección 'companies', que contiene información sobre empresas, como su año de fundación y la dirección de su sede.
+
+Supongamos que desea conocer la tendencia del número de empresas de publicidad (category_code = 'advertising') fundadas a partir de 2000 en adelante. Para ello, utilice el operador relacional [$gt](https://docs.mongodb.com/manual/reference/operator/query/gt/), agrupe los resultados por año de creación ('founded_year') y ordénalos para que se muestren posteriormente en un gráfico de líneas por año. 
+
+Primero establecemos la conexión con la nueva base de datos y comprobamos que funciona. En el chunk siguiente, vamos a ir explicando los pasos que vamos dando.
+
+```{r Tarea 4: Tendencia_en_empresas_de_publicidad}
+
+# Establecemos la conexión con mongo:
+
+cadena_conexion = 'mongodb+srv://user01:user01@cluster0.mcblc3z.mongodb.net/test'
+
+opciones_conexion = ssl_options(weak_cert_validation = T)
+
+conexion_companies <- mongo(collection = "companies", db = "sample_training", url = cadena_conexion, options = opciones_conexion)
+
+# Vemos la estructura de la base de datos:
+
+empresas_publicidad <- conexion_companies$find()
+
+# head(empresas_publicidad, 10) Inicialmente había puesto esta salida pero tiene muchos datos y no la pongo en el informe
+
+# Establecemos las condiciones que nos impone el enunciado, tipo de empresas y año de creación:
+
+condiciones <- '{
+"$and": [
+  {"category_code": "advertising"},
+  {"founded_year": {"$gt": 2000}}
+  ]
+}'
+
+# Filtramos las empresas con las condiciones señaladas:
+
+filtro_empresas_publicidad <- conexion_companies$find(condiciones)
+
+# Contamos las empresas por año de fundación:
+
+contar_empresas <- filtro_empresas_publicidad %>%
+  group_by(founded_year) %>%
+  summarise(Numero_de_Empresas = n())
+
+# Hacemos el gráfico:
+
+grafico_empresas <- ggplot(contar_empresas, aes(x = founded_year, y = Numero_de_Empresas)) +
+  geom_line() +
+  labs(
+    title = "Tendencia del número de empresas de publicidad desde el año 2000)",
+    x = "Año de fundación",
+    y = "Número de empresas"
+  ) +
+  theme_minimal()
+
+# Mostramos el gráfico:
+
+print(grafico_empresas)
+
+```
+# 3. Conclusiones
+
+En el presente informe recogemos las actividades propuestas. La primera y la cuarta no he tenido especiales dificultades en realizarlas. La segunda ha sido a la que más tiempo le he dedicado ya que primero me costaba añadir el registro poniendo la fecha en formato y luego la búsqueda me ha costado menos pero la primera parte me ha llevado tiempo hacerla sin que me diera problemas el código generado. 
+
+También me he bloqueado con el tema del gráfico, que era lo que debería ser más sencillo pero a veces, con el bloqueo que traes de no que no te salgan las actividades, te cuesta ver cómo plantearlo y te decides por caminos más laboriosos pero más seguros. 
+
+Entiendo los pasos que he dado en cada caso y lo que me cuesta menos es trabajar en R, por lo que intento traer todo lo que puedo a la forma de trabajar que me pide R, sin que lo hubiera utilizado antes, pero ya me siento más cómodo trabajando así. 
